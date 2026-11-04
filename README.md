@@ -148,6 +148,14 @@ predictor = YugPredictor.from_pretrained(
 forecasts = list(predictor.predict(dataset))
 ```
 
+By default, the GluonTS adapter advances one seeded sampling stream through
+the dataset, preserving the behavior used for existing benchmark results.
+For forecasts that should stay attached to their items when dataset order
+changes, opt into `seed_strategy="item"`. Each entry then gets a separate
+pseudorandom stream derived from the predictor seed and its `item_id`; entries
+without an ID use their position in the dataset. The direct pipeline API
+supports the same option and accepts `item_ids` alongside a batch of contexts.
+
 ---
 
 ## Examples

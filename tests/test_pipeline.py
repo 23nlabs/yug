@@ -88,6 +88,45 @@ def test_same_seed_is_reproducible_and_different_seeds_are_not(pipeline, series)
     assert not np.array_equal(a, c)
 
 
+def test_item_seed_is_reproducible_and_invariant_to_batch_order(pipeline, series):
+    first, second = series, series[:200]
+    forward = pipeline.predict(
+        [first, second],
+        32,
+        num_samples=8,
+        seed=42,
+        item_ids=["first", "second"],
+        seed_strategy="item",
+    ).values
+    reverse = pipeline.predict(
+        [second, first],
+        32,
+        num_samples=8,
+        seed=42,
+        item_ids=["second", "first"],
+        seed_strategy="item",
+    ).values
+    assert np.array_equal(forward[0], reverse[1])
+    assert np.array_equal(forward[1], reverse[0])
+
+
+def test_item_seed_requires_integer_seed(pipeline, series):
+    with pytest.raises(ValueError, match="requires an integer seed"):
+        pipeline.predict(
+            [series], 16, seed=np.random.default_rng(0), seed_strategy="item"
+        )
+
+
+def test_item_ids_must_match_batch_size(pipeline, series):
+    with pytest.raises(ValueError, match="one ID per context series"):
+        pipeline.predict([series, series], 16, item_ids=["only-one"])
+
+
+def test_seed_strategy_must_be_known(pipeline, series):
+    with pytest.raises(ValueError, match="seed_strategy"):
+        pipeline.predict([series], 16, seed_strategy="per_batch")
+
+
 def test_cached_and_exact_engines_agree(pipeline, series):
     """The cached engine is mathematically equivalent, not bitwise identical.
 

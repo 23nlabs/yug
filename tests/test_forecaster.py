@@ -154,6 +154,35 @@ def test_gluonts_adapter_walks_one_rng_stream(pipeline, series):
     assert np.array_equal(adapter, direct)
 
 
+def test_gluonts_adapter_item_seed_is_stable_when_dataset_order_changes(pipeline, series):
+    import pandas as pd
+
+    from yug.gluonts_adapter import YugPredictor
+
+    entries = [
+        {"target": series, "start": pd.Period("2020-01-01", freq="D"), "item_id": "a"},
+        {
+            "target": series[:200],
+            "start": pd.Period("2020-01-01", freq="D"),
+            "item_id": "b",
+        },
+    ]
+    predictor = YugPredictor(
+        pipeline, prediction_length=24, num_samples=8, seed=5, seed_strategy="item"
+    )
+    forward = {f.item_id: f.forecast_array for f in predictor.predict(entries)}
+    reverse = {f.item_id: f.forecast_array for f in predictor.predict(entries[::-1])}
+    assert np.array_equal(forward["a"], reverse["a"])
+    assert np.array_equal(forward["b"], reverse["b"])
+
+
+def test_gluonts_adapter_rejects_unknown_seed_strategy(pipeline):
+    from yug.gluonts_adapter import YugPredictor
+
+    with pytest.raises(ValueError, match="seed_strategy"):
+        YugPredictor(pipeline, seed_strategy="random")
+
+
 def test_gluonts_adapter_defaults_to_the_trained_context_window(pipeline):
     from yug.gluonts_adapter import YugPredictor
 

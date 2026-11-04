@@ -25,6 +25,7 @@ honest about multi-block uncertainty.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from collections.abc import Sequence
 from pathlib import Path
@@ -274,6 +275,7 @@ class YugPipeline(BaseForecastPipeline):
         pad_side: str | None = None,
         seed: int | np.random.Generator | None = None,
         item_ids: Sequence[Any] | None = None,
+        seed_strategy: str = "stream",
     ) -> QuantileForecast:
         """Forecast ``prediction_length`` steps beyond each context series.
 
@@ -303,6 +305,13 @@ class YugPipeline(BaseForecastPipeline):
             gives the same answer. A ``np.random.Generator`` is used as-is and
             left advanced, so one stream can span several calls.
 
+        ``seed_strategy``
+            ``"stream"`` (default) preserves sequential sampling across series.
+            ``"item"`` derives a separate stream from the integer seed and each
+            item ID, making a series' samples invariant to batch order. When IDs
+            are omitted, the series position is used. Item mode requires an
+            integer seed; it cannot split a caller-owned Generator reproducibly.
+
         Returns a :class:`~yug.base.QuantileForecast` of shape
         ``(n_series, n_quantiles, prediction_length)``.
         """
@@ -330,11 +339,31 @@ class YugPipeline(BaseForecastPipeline):
 
         series_list = _as_series_list(context)
         freqs = _broadcast_freq(freq, len(series_list))
-        rng = np.random.default_rng(d.seed if seed is None else seed)
+        seed_value = d.seed if seed is None else seed
+        if seed_strategy not in ("stream", "item"):
+            raise ValueError("seed_strategy must be 'stream' or 'item'")
+        if item_ids is not None and len(item_ids) != len(series_list):
+            raise ValueError("item_ids must contain one ID per context series")
+        if seed_strategy == "item":
+            if isinstance(seed_value, np.random.Generator):
+                raise ValueError("seed_strategy='item' requires an integer seed")
+            root_seed = int(seed_value)
+            ids = item_ids if item_ids is not None else range(len(series_list))
+            rngs = []
+            for index, item_id in enumerate(ids):
+                identity = index if item_id is None else item_id
+                digest = hashlib.sha256(str(identity).encode("utf-8")).digest()
+                item_seed = int.from_bytes(digest[:8], "little")
+                rngs.append(
+                    np.random.default_rng(np.random.SeedSequence([root_seed, item_seed]))
+                )
+        else:
+            rng = np.random.default_rng(seed_value)
+            rngs = [rng] * len(series_list)
 
         bands = []
         with torch.inference_mode():
-            for target, f in zip(series_list, freqs, strict=True):
+            for target, f, series_rng in zip(series_list, freqs, rngs, strict=True):
                 bands.append(
                     self._predict_one(
                         target,
@@ -344,7 +373,7 @@ class YugPipeline(BaseForecastPipeline):
                         context_length=ctx_limit,
                         engine=engine_mode,
                         pad_side=side,
-                        rng=rng,
+                        rng=series_rng,
                     )
                 )
 

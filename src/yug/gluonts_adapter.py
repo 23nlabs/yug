@@ -63,6 +63,7 @@ class YugPredictor:
         engine: str = "cached",
         pad_side: str = "left",
         seed: int = 0,
+        seed_strategy: str = "stream",
         target_index: int = 0,
         lead_time: int = 0,
     ) -> None:
@@ -75,6 +76,9 @@ class YugPredictor:
         self.engine = engine
         self.pad_side = pad_side
         self.seed = int(seed)
+        if seed_strategy not in ("stream", "item"):
+            raise ValueError("seed_strategy must be 'stream' or 'item'")
+        self.seed_strategy = seed_strategy
         self.target_index = int(target_index)
 
         self.quantile_levels: list[float] = list(pipeline.quantile_levels)
@@ -145,6 +149,9 @@ class YugPredictor:
         n = 0
         for entry in dataset:
             target = np.asarray(entry["target"], dtype=np.float32)
+            identity = entry.get("item_id")
+            if identity is None:
+                identity = n
             forecast = self.pipeline.predict(
                 [target],  # a one-element batch
                 horizon,
@@ -153,7 +160,9 @@ class YugPredictor:
                 context_length=self.context_length,
                 engine=self.engine,
                 pad_side=self.pad_side,
-                seed=rng,
+                seed=self.seed if self.seed_strategy == "item" else rng,
+                item_ids=[identity],
+                seed_strategy=self.seed_strategy,
             )
 
             seq_len = target.shape[-1] if target.ndim == 2 else len(target)
@@ -175,6 +184,6 @@ class YugPredictor:
     def __repr__(self) -> str:
         return (
             f"YugPredictor(freq={self.freq!r}, engine={self.engine!r}, "
-            f"num_samples={self.num_samples}, "
+            f"num_samples={self.num_samples}, seed_strategy={self.seed_strategy!r}, "
             f"quantile_levels={self.quantile_levels})"
         )
